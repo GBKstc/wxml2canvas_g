@@ -160,6 +160,7 @@ let data = {
 | height | Number | 是 | 高 |
 | fill | String 或 Object | 否 | 填充颜色，支持渐变色 |
 | border | String | 否 | 边框，需要严格遵循 __'10px dashed #540821'__ 格式 |
+| borderRadius | String 或 Object | 否 | 12 或 [12,12,12,12]格式 |
 | boxShadow | String | 否 | 阴影，需要严格遵循 __'10 20 20 rgba(0, 0, 0, 0.4)'__ 格式 |
 | dash | Array | 否 | 虚线边框的间距和偏移 |
 
