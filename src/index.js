@@ -48,11 +48,65 @@ class Wxml2Canvas {
   }
 
   measureWidth(text, font) {
+    // cosnt measureText = this.ctx.measureText;
+    function parseFontSize(fontStr) {
+      const regex = /(\d+)(px|pt)/;
+      const matches = fontStr.match(regex);
+      if (matches && matches.length >= 2) {
+        return parseInt(matches[1], 10);
+      }
+      return null;
+    }
+
+    function estimateCharWidth(char, fontSize) {
+      // 基于字符类型估算宽度
+      if (char === ' ') return fontSize * 0.5; // 空格宽度假设
+      if (char.match(/[\u4e00-\u9fa5]/)) return fontSize * 1; // 中文字符宽度假设
+      if (char.match(/[a-zA-Z]/)) return fontSize * 1; // 英文字符宽度假设
+      if (char.match(/\d/)) return fontSize * 0.8; // 数字宽度假设
+      if (char.match(/\n|\r|↵/)) return fontSize * 0.5; // 换行或回车不增加宽
+      return fontSize * 1; // 其他字符宽度假设
+      // return measureText(char);
+    }
+    function estimateTextWidth(text) {
+      if (!fontSize) {
+        console.warn('Unable to parse font size from font string');
+        return 0;
+      }
+      let width = 0;
+      for (let i = 0; i < text.length; i++) {
+        width += estimateCharWidth(text[i], fontSize);
+      }
+      return width;
+    }
+
+    function compareWidthWithText(text, fontSize, resWidth) {
+      // 使用文本的实际字符数
+      const textLength = text.length;
+      // 计算理论宽度
+      const theoreticalWidth = textLength * fontSize;
+      // 计算实际宽度与理论宽度的比例
+      const ratio = resWidth / theoreticalWidth;
+      // 检查这个比例是否在0.8到1.2之间
+      return ratio >= 0.8 && ratio <= 1.2;
+    }
+
     if (font) {
       this.ctx.font = font;
     }
+    const fontSize = parseFontSize(this.ctx.font);
     let res = this.ctx.measureText(text) || {};
-    return res.width || 0;
+
+    if (this.device.system.indexOf('iOS') === -1) {
+      //如果是安卓机器 用原生的方法
+      return res.width || 0;
+    } else {
+      //如果是ios机器 用自己计算和原生结合的算法
+      if (compareWidthWithText(text, fontSize, res.width)) {
+        return res.width || 0;
+      }
+      return estimateTextWidth(text, this.ctx.font) || 0;
+    }
   }
 
   _init() {
@@ -366,6 +420,9 @@ class Wxml2Canvas {
         this._setFill(fill, () => {
           this._setRoundRectFill(borderRadius, x, y, width, height, () => {
             this.ctx.fill();
+            // this.ctx.strokeStyle = '#0000FF'; // 描边颜色
+            // this.ctx.lineWidth = 2; // 描边宽度
+            // this.ctx.stroke();
           });
         });
 
@@ -374,6 +431,10 @@ class Wxml2Canvas {
           this.ctx.fillRect(x, y, width, height);
         });
       }
+
+      // this._setFill(fill, () => {
+      //   this.ctx.fillRect(x, y, width, height);
+      // });
     }
 
     this._drawBorder(border, style, (border) => {
@@ -489,6 +550,7 @@ class Wxml2Canvas {
   }
 
   _drawText(item, style, resolve, reject, type, isWxml) {
+    console.log("绘制文本")
     let zoom = this.zoom;
     let leftOffset = 0;
     let topOffset = 0;
@@ -508,6 +570,12 @@ class Wxml2Canvas {
       let whiteSpace = style.whiteSpace || 'wrap';
       let x = 0;
       let y = 0;
+      console.log("要绘制的文本:" + text);
+      console.log("要绘制的文本框样式宽度:" + style.width);
+      console.log("要绘制的文本字体总宽度:" + textWidth);
+      console.log("要绘制的文本字体行高:" + lineHeight);
+      console.log("要绘制的文本字体总行高:" + textHeight);
+      console.log("要绘制的文本字体行宽度:" + width);
 
       if (typeof style.padding === 'string') {
         style.padding = Util.transferPadding(style.padding);
@@ -577,36 +645,55 @@ class Wxml2Canvas {
         // block文本，如果文本长度超过宽度换行
         if (width && textWidth > width && whiteSpace !== 'nowrap') {
           let lineNum = Math.max(Math.floor(textWidth / width), 1);
-          let length = text.length;
+          console.log("要绘制的文本行数:" + lineNum);
+          let length = text.length;// 文本总长度
           let singleLength = Math.floor(length / lineNum);
-          let currentIndex = 0;
+          let currentIndex = 0;// 当前处理到的文本索引
 
           // lineClamp参数限制最多行数
           if (style.lineClamp && lineNum + 1 > style.lineClamp) {
             lineNum = style.lineClamp - 1;
           }
 
-          for (let i = 0; i < lineNum; i++) {
-            let { endIndex, single, singleWidth } = this._getTextSingleLine(text, width, singleLength, currentIndex);
+          // for (let i = 0; i < lineNum; i++) {
+          //   let { endIndex, single, singleWidth } = this._getTextSingleLine(text, width, singleLength, currentIndex, undefined, fontSize);
+          //   // console.log(endIndex, single, singleWidth, "lineNum")
+          //   currentIndex = endIndex;
+          //   x = this._resetTextPositionX(item, style, singleWidth, width);
+          //   y = this._resetTextPositionY(item, style, i);
+          //   this.ctx.fillText(single, x, y);
+          // }
+
+          // // 换行后剩余的文字，超过一行则截断增加省略号
+          // let last = text.substring(currentIndex, length);
+          // let lastWidth = this.measureWidth(last);
+          // if (lastWidth > width) {
+          //   let { single, singleWidth } = this._getTextSingleLine(last, width, singleLength);
+          //   lastWidth = singleWidth;
+          //   last = single.substring(0, single.length - 1) + '...';
+          // }
+          let i = 0
+          // 循环处理每一行，直到文本结束
+          while (currentIndex < length) {
+            let { endIndex, single, singleWidth } = this._getTextSingleLine(text, width, singleLength, currentIndex, undefined, fontSize);
+            console.log(endIndex, single, singleWidth, singleLength);
+            // 更新currentIndex为下一行的起始索引
             currentIndex = endIndex;
-            x = this._resetTextPositionX(item, style, singleWidth, width);
-            y = this._resetTextPositionY(item, style, i);
+            // 计算文本在Canvas上的X和Y坐标
+            let x = this._resetTextPositionX(item, style, singleWidth, width);
+            let y = this._resetTextPositionY(item, style, i);
+            // 绘制当前行的文本
             this.ctx.fillText(single, x, y);
-
+            i++;
+            // 如果currentIndex已经处理完所有文本，则跳出循环
+            if (currentIndex >= length) {
+              break;
+            }
           }
 
-          // 换行后剩余的文字，超过一行则截断增加省略号
-          let last = text.substring(currentIndex, length);
-          let lastWidth = this.measureWidth(last);
-          if (lastWidth > width) {
-            let { single, singleWidth } = this._getTextSingleLine(last, width, singleLength);
-            lastWidth = singleWidth;
-            last = single.substring(0, single.length - 1) + '...';
-          }
-
-          x = this._resetTextPositionX(item, style, lastWidth, width);
-          y = this._resetTextPositionY(item, style, lineNum);
-          this.ctx.fillText(last, x, y);
+          // x = this._resetTextPositionX(item, style, lastWidth, width);
+          // y = this._resetTextPositionY(item, style, lineNum);
+          // this.ctx.fillText(last, x, y);
 
         } else {
           x = this._resetTextPositionX(item, style, textWidth, width);
@@ -1294,8 +1381,8 @@ class Wxml2Canvas {
     let blockLineHeightFix = (style.dataset && style.dataset.type || '').indexOf('inline') > -1 ? 0 : (lineHeight - fontSize) / 2
 
     let top = style.padding ? (style.padding[0] || 0) : 0;
-
-    // y + lineheight偏移 + 行数 + paddingTop + 整体画布位移
+    // console.log(item.y, blockLineHeightFix, lineNum * lineHeight, top, this.translateY, 'y + lineheight偏移 + 行数 + paddingTop + 整体画布位移 + 校准');
+    // y + lineheight偏移 + 行数 + paddingTop + 整体画布位移 + 校准
     return item.y + blockLineHeightFix + lineNum * lineHeight + top + this.translateY;
   }
 
@@ -1307,19 +1394,33 @@ class Wxml2Canvas {
    * @param {*} currentIndex
    * @param {*} widthOffset
    */
-  _getTextSingleLine(text, width, singleLength, currentIndex = 0, widthOffset = 0) {
-    let offset = 0;
-    let endIndex = currentIndex + singleLength + offset;
-    let single = text.substring(currentIndex, endIndex);
-    let singleWidth = this.measureWidth(single);
+  _getTextSingleLine(text, width, singleLength, currentIndex = 0, widthOffset = 0, fontSize) {
+    // let offset = 0;
+    // let endIndex = currentIndex + singleLength + offset;
+    // let single = text.substring(currentIndex, endIndex);
+    // let singleWidth = this.measureWidth(single);
 
-    while (Math.round(widthOffset + singleWidth) > width) {
-      offset--;
-      endIndex = currentIndex + singleLength + offset;
-      single = text.substring(currentIndex, endIndex);
-      singleWidth = this.measureWidth(single);
+    // //识别single字符串中有多少符号
+
+    // while (Math.round(widthOffset + singleWidth) > width) {
+    //   offset--;
+    //   endIndex = currentIndex + singleLength + offset;
+    //   single = text.substring(currentIndex, endIndex);
+    //   singleWidth = this.measureWidth(single);
+    // }
+    let singleWidth = 0;
+    let endIndex = currentIndex;
+    let single = '';
+    while (Math.round(widthOffset + singleWidth) <= width && endIndex < text.length) {
+      let nextChar = text[endIndex];
+      let nextCharWidth = this.measureWidth(nextChar);
+      if (text.length - endIndex !== 1 && Math.round(widthOffset + singleWidth + nextCharWidth) > width) {
+        break;
+      }
+      single += nextChar;
+      singleWidth += nextCharWidth;
+      endIndex++;
     }
-
     return {
       endIndex,
       single,
@@ -1382,24 +1483,53 @@ class Wxml2Canvas {
   _setRoundRectFill(radius, x, y, width, height, callback) {
 
     if (radius) {
+
+      console.log('setRoundRectFill', x, y, width, height, radius, this.zoom);
       if (typeof radius === 'number') {
-        this.ctx.beginPath();
-        this.ctx.moveTo(x + radius, y);
-        this.ctx.arcTo(x + width, y, x + width, y + height, radius);
-        this.ctx.arcTo(x + width, y + height, x, y + height, radius);
-        this.ctx.arcTo(x, y + height, x, y, radius);
-        this.ctx.arcTo(x, y, x + width, y, radius);
-        this.ctx.closePath();
-      } else {
+        // 确保半径不超过宽度和高度的一半
+        const effectiveRadius = Math.min(radius, width / 2, height / 2);
+
+        this.ctx.moveTo(x + effectiveRadius, y); // 从左上角圆角的起始点开始
+
+        // 上边线
+        this.ctx.lineTo(x + width - effectiveRadius, y);
+        this.ctx.arcTo(x + width, y, x + width, y + effectiveRadius, effectiveRadius);
+
+        // 右边线
+        this.ctx.lineTo(x + width, y + height - effectiveRadius);
+        this.ctx.arcTo(x + width, y + height, x + width - effectiveRadius, y + height, effectiveRadius);
+
+        // 下边线
+        this.ctx.lineTo(x + effectiveRadius, y + height);
+        this.ctx.arcTo(x, y + height, x, y + height - effectiveRadius, effectiveRadius);
+
+        // 左边线
+        this.ctx.lineTo(x, y + effectiveRadius);
+        this.ctx.arcTo(x, y, x + effectiveRadius, y, effectiveRadius);
+      } else if (Array.isArray(radius) && radius.length === 4) {
         const [radiusTopLeft, radiusTopRight, radiusBottomRight, radiusBottomLeft] = radius;
-        // this.ctx.setLineDash([5, 5]);
-        this.ctx.beginPath();
+
+        // 左上角
         this.ctx.moveTo(x + radiusTopLeft, y);
+
+        // 上边线
+        this.ctx.lineTo(x + width - radiusTopRight, y);
         this.ctx.arcTo(x + width, y, x + width, y + radiusTopRight, radiusTopRight);
+
+        // 右边线
+        this.ctx.lineTo(x + width, y + height - radiusBottomRight);
         this.ctx.arcTo(x + width, y + height, x + width - radiusBottomRight, y + height, radiusBottomRight);
+
+        // 下边线
+        this.ctx.lineTo(x + radiusBottomLeft, y + height);
         this.ctx.arcTo(x, y + height, x, y + height - radiusBottomLeft, radiusBottomLeft);
+
+        // 左边线
+        this.ctx.lineTo(x, y + radiusTopLeft);
         this.ctx.arcTo(x, y, x + radiusTopLeft, y, radiusTopLeft);
-        this.ctx.closePath();
+      } else {
+        console.error('Radius must be a number or an array of four numbers.');
+        return;
       }
       callback && callback();
     }
