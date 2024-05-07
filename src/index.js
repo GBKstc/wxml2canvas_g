@@ -48,6 +48,7 @@ class Wxml2Canvas {
   }
 
   measureWidth(text, font) {
+    const that = this;
     // cosnt measureText = this.ctx.measureText;
     function parseFontSize(fontStr) {
       const regex = /(\d+)(px|pt)/;
@@ -59,6 +60,7 @@ class Wxml2Canvas {
     }
 
     function estimateCharWidth(char, fontSize) {
+      return that.ctx.measureText(char).width || fontSize;
       // 基于字符类型估算宽度
       if (char === ' ') return fontSize * 0.5; // 空格宽度假设
       if (char.match(/[\u4e00-\u9fa5]/)) return fontSize * 1; // 中文字符宽度假设
@@ -66,7 +68,6 @@ class Wxml2Canvas {
       if (char.match(/\d/)) return fontSize * 0.8; // 数字宽度假设
       if (char.match(/\n|\r|↵/)) return fontSize * 0.5; // 换行或回车不增加宽
       return fontSize * 1; // 其他字符宽度假设
-      // return measureText(char);
     }
     function estimateTextWidth(text) {
       if (!fontSize) {
@@ -413,7 +414,16 @@ class Wxml2Canvas {
       if (mode) {
         this._resetImageByMode(url, x, y, width, height, mode);
       } else {
-        this.ctx.drawImage(url, x, y, width, height)
+        console.log(url, x, y, width, height, borderRadius, '_drawRectToCanvas')
+        if (borderRadius) {
+          this._setRoundRectFill(borderRadius, x, y, width, height, () => {
+            this.ctx.clip();
+            //绘制图片
+            this.ctx.drawImage(url, x, y, width, height);
+          });
+        } else {
+          this.ctx.drawImage(url, x, y, width, height)
+        }
       }
     } else {
       if (borderRadius) {
@@ -570,12 +580,13 @@ class Wxml2Canvas {
       let whiteSpace = style.whiteSpace || 'wrap';
       let x = 0;
       let y = 0;
-      console.log("要绘制的文本:" + text);
-      console.log("要绘制的文本框样式宽度:" + style.width);
-      console.log("要绘制的文本字体总宽度:" + textWidth);
-      console.log("要绘制的文本字体行高:" + lineHeight);
-      console.log("要绘制的文本字体总行高:" + textHeight);
-      console.log("要绘制的文本字体行宽度:" + width);
+      // console.log("要绘制的文本:" + text);
+      // console.log("要绘制的文本字体大小:" + style.fontSize);
+      // console.log("要绘制的文本框样式宽度:" + style.width);
+      // console.log("要绘制的文本字体总宽度:" + textWidth);
+      // console.log("要绘制的文本字体行高:" + lineHeight);
+      // console.log("要绘制的文本字体总行高:" + textHeight);
+      // console.log("要绘制的文本字体行宽度:" + width);
 
       if (typeof style.padding === 'string') {
         style.padding = Util.transferPadding(style.padding);
@@ -1195,14 +1206,26 @@ class Wxml2Canvas {
     if (style.dataset && style.dataset.type) {
       zoom = 1;
     }
+
+    let baseFontSize = style.fontSize || 14; // 默认字体大小
+    let defaultLineHeight = baseFontSize * 1.25; // 默认行高
+
     let lineHeight;
-    if (!isNaN(style.lineHeight) && style.lineHeight > style.fontSize) {
-      lineHeight = style.lineHeight;
-    } else {
+    if (!isNaN(style.lineHeight) && style.lineHeight > 0) {
+      // 将 lineHeight 转换为数值，去除 'px' 后缀（如果有）
       style.lineHeight = (style.lineHeight || '') + '';
       lineHeight = +style.lineHeight.replace('px', '');
-      lineHeight = lineHeight ? lineHeight : (style.fontSize || 14) * 1.2;
+
+      // 如果 lineHeight 未成功转换为数字，或者转换后的 lineHeight 小于或等于 0
+      // 或者 lineHeight 大于默认行高，则使用默认行高
+      if (!lineHeight || lineHeight > defaultLineHeight) {
+        lineHeight = defaultLineHeight;
+      }
+    } else {
+      // 如果 lineHeight 不是一个有效数值，使用默认行高
+      lineHeight = defaultLineHeight;
     }
+
     return lineHeight * zoom;
   }
 
@@ -1480,58 +1503,48 @@ class Wxml2Canvas {
       callback && callback();
     }
   }
+  _drawRoundedRectPath(x, y, width, height, radius) {
+    const [tl, tr, br, bl] = radius; // 解构数组以获取每个角的半径
+
+    // 左上角圆弧
+    this.ctx.arc(x + tl, y + tl, tl, Math.PI, Math.PI * 1.5);
+
+    // 上边线及右上角圆弧
+    this.ctx.arc(x + width - tr, y + tr, tr, Math.PI * 1.5, Math.PI * 2);
+
+    // 右边线及右下角圆弧
+    this.ctx.arc(x + width - br, y + height - br, br, 0, Math.PI * 0.5);
+
+    // 下边线及左下角圆弧
+    this.ctx.arc(x + bl, y + height - bl, bl, Math.PI * 0.5, Math.PI);
+
+    this.ctx.closePath(); // 闭合路径
+  }
+
   _setRoundRectFill(radius, x, y, width, height, callback) {
-
+    console.log('setRoundRectFill', x, y, width, height, radius, this.zoom);
     if (radius) {
+      this.ctx.beginPath(); // 开始路径绘制
 
-      console.log('setRoundRectFill', x, y, width, height, radius, this.zoom);
       if (typeof radius === 'number') {
-        // 确保半径不超过宽度和高度的一半
-        const effectiveRadius = Math.min(radius, width / 2, height / 2);
-
-        this.ctx.moveTo(x + effectiveRadius, y); // 从左上角圆角的起始点开始
-
-        // 上边线
-        this.ctx.lineTo(x + width - effectiveRadius, y);
-        this.ctx.arcTo(x + width, y, x + width, y + effectiveRadius, effectiveRadius);
-
-        // 右边线
-        this.ctx.lineTo(x + width, y + height - effectiveRadius);
-        this.ctx.arcTo(x + width, y + height, x + width - effectiveRadius, y + height, effectiveRadius);
-
-        // 下边线
-        this.ctx.lineTo(x + effectiveRadius, y + height);
-        this.ctx.arcTo(x, y + height, x, y + height - effectiveRadius, effectiveRadius);
-
-        // 左边线
-        this.ctx.lineTo(x, y + effectiveRadius);
-        this.ctx.arcTo(x, y, x + effectiveRadius, y, effectiveRadius);
+        // 当半径是一个数字时，所有角使用同一半径
+        radius = Math.min(radius, width / 2, height / 2);
+        this._drawRoundedRectPath(x, y, width, height, [radius, radius, radius, radius]);
       } else if (Array.isArray(radius) && radius.length === 4) {
-        const [radiusTopLeft, radiusTopRight, radiusBottomRight, radiusBottomLeft] = radius;
-
-        // 左上角
-        this.ctx.moveTo(x + radiusTopLeft, y);
-
-        // 上边线
-        this.ctx.lineTo(x + width - radiusTopRight, y);
-        this.ctx.arcTo(x + width, y, x + width, y + radiusTopRight, radiusTopRight);
-
-        // 右边线
-        this.ctx.lineTo(x + width, y + height - radiusBottomRight);
-        this.ctx.arcTo(x + width, y + height, x + width - radiusBottomRight, y + height, radiusBottomRight);
-
-        // 下边线
-        this.ctx.lineTo(x + radiusBottomLeft, y + height);
-        this.ctx.arcTo(x, y + height, x, y + height - radiusBottomLeft, radiusBottomLeft);
-
-        // 左边线
-        this.ctx.lineTo(x, y + radiusTopLeft);
-        this.ctx.arcTo(x, y, x + radiusTopLeft, y, radiusTopLeft);
+        // 当半径是一个含有四个数字的数组时，分别代表左上、右上、右下、左下角的半径
+        // 确保每个半径不超过相应的最大值
+        radius = radius.map((r, index) => {
+          const isWidth = index === 0 || index === 3;
+          const maxRadius = isWidth ? width / 2 : height / 2;
+          return Math.min(r, maxRadius);
+        });
+        this._drawRoundedRectPath(x, y, width, height, radius);
       } else {
         console.error('Radius must be a number or an array of four numbers.');
         return;
       }
-      callback && callback();
+
+      if (callback) callback();
     }
   }
 
